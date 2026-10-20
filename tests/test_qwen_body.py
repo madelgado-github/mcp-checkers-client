@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests del body HTTP de QwenClient: la flag `enable_thinking` se manda SOLO
-cuando la config la define (fix latencia 2026-10-20: token-plan razona por
-defecto con qwen3.8-flash => 2-3 min/jugada; con enable_thinking:false ~2 s).
+"""Tests for QwenClient's HTTP body: the `enable_thinking` flag is sent ONLY
+when the config defines it (latency fix 2026-10-20: token-plan reasons by
+default with qwen3.8-flash => 2-3 min/move; with enable_thinking:false ~2 s).
 
-Trazabilidad del bucle: `on_event` emite 'consultando modelo...' antes de la
-llamada, la duracion al volver, y el MOTIVO de cada retry fallido (no queda
-mudo). Cliente FAKED con urlopen parcheado: sin red, hermetico."""
+Loop traceability: `on_event` emits 'querying model...' before the call, the
+duration after, and the REASON of each failed retry (never goes silent). The
+client is FAKED with a patched urlopen: no network, hermetic."""
 
 import json
 import os
@@ -38,8 +38,8 @@ def _ok_response(req=None):
 
 
 def _run_chat(client, side_effect=_ok_response):
-    """Devuelve (bodies_enviados, timeouts, eventos). side_effect: callable(req)
-    que retorna response o lanza."""
+    """Returns (sent_bodies, timeouts, events). side_effect: callable(req)
+    that returns a response or raises."""
     captured = {"bodies": [], "timeouts": [], "n": 0}
 
     def fake_urlopen(req, timeout=None):
@@ -51,7 +51,7 @@ def _run_chat(client, side_effect=_ok_response):
     events = []
     client.on_event = events.append
     with mock.patch.object(urllib.request, "urlopen", fake_urlopen):
-        client.chat([{"role": "user", "content": "hola"}])
+        client.chat([{"role": "user", "content": "hello"}])
     return captured["bodies"], captured["timeouts"], events
 
 
@@ -61,48 +61,49 @@ def make_client(**kw):
 
 
 class TestEnableThinkingBody(unittest.TestCase):
-    def test_false_se_incluye_en_body(self):
+    def test_false_is_included_in_body(self):
         bodies, _to, _ev = _run_chat(make_client(enable_thinking=False))
         self.assertIn("enable_thinking", bodies[0])
         self.assertIs(bodies[0]["enable_thinking"], False)
-        # demas campos intactos
+        # other fields intact
         self.assertEqual(bodies[0]["model"], "qwen3.8-flash")
         self.assertEqual(len(bodies[0]["messages"]), 1)
 
-    def test_true_se_incluye_en_body(self):
+    def test_true_is_included_in_body(self):
         bodies, _to, _ev = _run_chat(make_client(enable_thinking=True))
         self.assertIs(bodies[0]["enable_thinking"], True)
 
-    def test_null_NO_se_envia_flag(self):
-        """Endpoints que no conocen el flag: con enable_thinking=None el body
-        es exactamente model+messages (comportamiento pre-fix)."""
+    def test_null_DOES_NOT_send_flag(self):
+        """Endpoints that do not know the flag: with enable_thinking=None the
+        body is exactly model+messages (pre-fix behavior)."""
         bodies, _to, _ev = _run_chat(make_client(enable_thinking=None))
         self.assertNotIn("enable_thinking", bodies[0])
         self.assertEqual(sorted(bodies[0].keys()), ["messages", "model"])
 
-    def test_default_constructor_es_none_y_timeout_90(self):
+    def test_constructor_default_is_none_and_timeout_90(self):
         c = QwenClient("http://x", "m", "k")
         self.assertIsNone(c.enable_thinking)
-        self.assertEqual(c.timeout, 90)  # antes 180; thinking off => sobra 90
+        self.assertEqual(c.timeout, 90)  # was 180; thinking off => 90 is enough
 
 
-class TestTrazabilidad(unittest.TestCase):
-    def test_eventos_antes_duracion_y_label_thinking(self):
+class TestTraceability(unittest.TestCase):
+    def test_events_before_duration_and_thinking_label(self):
         bodies, timeouts, events = _run_chat(make_client(enable_thinking=False, timeout=90))
-        self.assertEqual(timeouts, [90])  # el timeout llega a urlopen
-        self.assertIn("consultando modelo", events[0])
+        self.assertEqual(timeouts, [90])  # the timeout reaches urlopen
+        self.assertIn("querying model", events[0])
         self.assertIn("timeout 90s", events[0])
         self.assertIn("thinking off", events[0])
-        self.assertIn("respondi\u00f3 en", events[-1])
+        self.assertIn("responded in", events[-1])
         self.assertIn("s", events[-1])
 
-    def test_evento_label_sin_flag_cuando_none(self):
+    def test_event_label_is_no_flag_when_none(self):
         _b, _t, events = _run_chat(make_client(enable_thinking=None))
-        self.assertIn("thinking sin flag", events[0])
+        self.assertIn("thinking no flag", events[0])
 
-    def test_retry_fallido_no_queda_mudo(self):
-        """Primer intento URLError (p.ej. timeout), segundo OK: debe emitirse
-        el MOTIVO del fallo y reintentarse; y la key jamas sale en los eventos."""
+    def test_failed_retry_is_not_silent(self):
+        """First attempt URLError (e.g. timeout), second OK: the REASON of the
+        failure must be emitted and retried; and the key never shows up in the
+        events."""
 
         def flaky(req):
             if "first" not in flaky.__dict__:
@@ -116,16 +117,16 @@ class TestTrazabilidad(unittest.TestCase):
         c.on_event = events.append
         with mock.patch.object(urllib.request, "urlopen",
                                side_effect=lambda req, timeout=None: flaky(req)), \
-             mock.patch("time.sleep"):  # no dormir en el backoff
+             mock.patch("time.sleep"):  # do not sleep in the backoff
             out = c.chat([{"role": "user", "content": "x"}])
         self.assertEqual(out, '{"from": 1}')
-        retry_lines = [e for e in events if "fall\u00f3" in e]
+        retry_lines = [e for e in events if "failed" in e]
         self.assertEqual(len(retry_lines), 1)
         self.assertIn("429", retry_lines[0])
-        self.assertIn("intento 1/2", retry_lines[0])
-        self.assertNotIn("SECRET-KEY-123", "\n".join(events))  # scrub aplicado
+        self.assertIn("attempt 1/2", retry_lines[0])
+        self.assertNotIn("SECRET-KEY-123", "\n".join(events))  # scrub applied
 
-    def test_401_terminal_emite_aborto(self):
+    def test_401_terminal_emits_abort(self):
         c = make_client(retries=2)
         events = []
         c.on_event = events.append
@@ -138,11 +139,11 @@ class TestTrazabilidad(unittest.TestCase):
                                side_effect=lambda req, timeout=None: deny(req)):
             with self.assertRaises(QwenError):
                 c.chat([{"role": "user", "content": "x"}])
-        self.assertTrue(any("aborto" in e for e in events))
+        self.assertTrue(any("aborting" in e for e in events))
 
 
 class TestConfigEnableThinking(unittest.TestCase):
-    """parse_optional_bool de play_checkers: false/true/vacío => False/True/None."""
+    """parse_optional_bool in play_checkers: false/true/empty => False/True/None."""
 
     def _cp(self, raw):
         import configparser
@@ -152,17 +153,17 @@ class TestConfigEnableThinking(unittest.TestCase):
         cp.read_dict({"qwen": {"enable_thinking": raw}})
         return pc.parse_optional_bool(cp, "qwen", "enable_thinking")
 
-    def test_valores(self):
+    def test_values(self):
         self.assertIs(self._cp("false"), False)
         self.assertIs(self._cp("true"), True)
         self.assertIsNone(self._cp(""))
         self.assertIsNone(self._cp("none"))
 
-    def test_junk_gira_error_claro(self):
+    def test_junk_raises_clear_error(self):
         import play_checkers as pc
         from game_session import AgentError
         with self.assertRaises(AgentError):
-            self._cp("quizas")
+            self._cp("maybe")
 
 
 if __name__ == "__main__":

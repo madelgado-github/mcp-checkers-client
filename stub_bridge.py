@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""STUB local del puente `@jason.today/webmcp --mcp` para probar el bucle.
+"""Local STUB of the `@jason.today/webmcp --mcp` bridge, for loop tests.
 
-Habla el MISMO protocolo stdio verificado contra el paquete real (JSON-RPC 2.0
-ndjson; initialize / tools/list / tools/call), lista las 6 tools `checkers_*`
-con el prefijo de canal `localhost_8088-` (anulable con la variable de entorno
-`WEBMCP_STUB_CHANNEL_PREFIX`, p. ej. `tabandblank_com-` para simular el canal
-de producción — verificado en la fuente: canal = window.location.host con `.`
-y `:` sustituidos por `_`) y los 2 built-ins, y simula UNA partida guionizada
-de 3 ciclos humano→agente con jugadas falsas pero coherentes (tablero de 64
-celdas con los códigos del contrato, jugadas {from,path,captured} como las de
-checkers_rules).
-NO reimplementa el motor: es doblaje para el loop.
+Speaks the SAME stdio protocol verified against the real package (JSON-RPC
+2.0 ndjson; initialize / tools/list / tools/call), lists the 6 `checkers_*`
+tools with the production channel prefix `tabandblank_com-` (the real channel
+format: window.location.host with `.` and `:` replaced by `_` — verified in
+the package source; override with the `WEBMCP_STUB_CHANNEL_PREFIX` env var to
+simulate any other channel) plus the 2 built-ins, and simulates ONE scripted
+game of 3 human→agent cycles with fake-but-coherent moves (64-cell board
+with the contract codes, {from,path,captured} moves like checkers_rules).
+It does NOT reimplement the engine: it is a loop double.
 
-Uso en tests:
-    McpBridge([sys.executable, "stub_bridge.py"])  # mismo cliente que el real
+Usage in tests:
+    McpBridge([sys.executable, "stub_bridge.py"])  # same client as the real one
 """
 
 from __future__ import annotations
@@ -23,20 +22,20 @@ import os
 import sys
 import time
 
-PREF = os.environ.get("WEBMCP_STUB_CHANNEL_PREFIX", "localhost_8088-")
+PREF = os.environ.get("WEBMCP_STUB_CHANNEL_PREFIX", "tabandblank_com-")
 
 INITIAL = [0] * 64
 for y in range(3):
     for x in range(8):
         if (x + y) % 2 == 1:
-            INITIAL[y * 8 + x] = 2          # P2 (agente) arriba
+            INITIAL[y * 8 + x] = 2          # P2 (agent) on top
 for y in range(5, 8):
     for x in range(8):
         if (x + y) % 2 == 1:
-            INITIAL[y * 8 + x] = 1          # P1 (humano) abajo
+            INITIAL[y * 8 + x] = 1          # P1 (human) on the bottom
 
-# Guion: por cada turno del agente, sus legales; tras su jugada, la respuesta
-# "humana" y al final del 3er ciclo la terminal (gana el agente: winner=2).
+# Script: per agent turn its legal moves; after the agent's move, the
+# "human" reply; at the end of the 3rd cycle the terminal one (agent wins: winner=2).
 SCRIPT = [
     {"legal": [{"from": 39, "path": [32], "captured": []},
                {"from": 39, "path": [34], "captured": []},
@@ -92,7 +91,7 @@ class FakeGame:
                 for cap in m["captured"]:
                     self.cells[cap] = 0
                 self.agent_moves.append((frm, tuple(path)))
-                # respuesta "humana" guionizada
+                # scripted "human" reply
                 spec = SCRIPT[self.turn]
                 self.turn += 1
                 hm = spec.get("human_move")
@@ -111,7 +110,7 @@ class FakeGame:
         return {"ok": False, "error": "illegal_move"}
 
     def human_phase(self):
-        """El wait_my_turn del stub simula que el humano mueve a los ~0.4 s."""
+        """The stub's wait_my_turn simulates the human moving after ~0.4 s."""
         time.sleep(0.4)
         self.cp = 2
 
@@ -204,7 +203,7 @@ def main():
                     tool_result({"ok": False, "error": "unknown_tool"}), isError=True)})
         else:
             send({"jsonrpc": "2.0", "id": mid,
-                  "error": {"code": -32601, "message": "metodo no soportado: %s" % method}})
+                  "error": {"code": -32601, "message": "unsupported method: %s" % method}})
 
 
 if __name__ == "__main__":

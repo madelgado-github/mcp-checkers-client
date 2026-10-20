@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Cliente MCP mínimo por stdio para el puente `@jason.today/webmcp --mcp`.
+"""Minimal stdio MCP client for the `@jason.today/webmcp --mcp` bridge.
 
-Investigado contra la fuente real (v0.1.12/0.1.13, ver README): el puente usa
-`@modelcontextprotocol/sdk` con `StdioServerTransport`, cuyo framing es
-**JSON-RPC 2.0 de una línea por mensaje, separadas por \\n** (ndjson), NO
-Content-Length de HTTP. Verificado en vivo: initialize → tools/list →
-tools/call funcionan con este cliente.
+Researched against the real source (v0.1.12/0.1.13, see README): the bridge
+uses `@modelcontextprotocol/sdk` with `StdioServerTransport`, whose framing
+is **JSON-RPC 2.0 one line per message, separated by \\n** (ndjson), NOT
+HTTP Content-Length. Verified live: initialize -> tools/list -> tools/call
+all work with this client.
 
-Manos libres: solo stdlib.
+Hands off dependencies: stdlib only.
 """
 
 from __future__ import annotations
@@ -21,11 +21,11 @@ import time
 
 
 class McpError(Exception):
-    """Error JSON-RPC o de transporte."""
+    """JSON-RPC or transport error."""
 
 
 class McpToolError(McpError):
-    """tools/call devolvio isError/texto no parseable: lleva el texto crudo."""
+    """tools/call returned isError/unparseable text: carries the raw text."""
 
     def __init__(self, text):
         super().__init__(text)
@@ -33,9 +33,9 @@ class McpToolError(McpError):
 
 
 class McpBridge:
-    """Subproceso `npx -y @jason.today/webmcp@latest --mcp` hablándole por stdio.
+    """`npx -y @jason.today/webmcp@latest --mcp` subprocess spoken to over stdio.
 
-    cmd: lista de argv para el puente (permite inyectar el stub local en tests).
+    cmd: argv list for the bridge (lets tests inject the local stub).
     """
 
     def __init__(self, cmd, stderr_sink=None):
@@ -44,11 +44,11 @@ class McpBridge:
         self._id = 0
         self._responses = {}          # id -> queue.Queue
         self._lock = threading.Lock()
-        self._stderr_sink = stderr_sink  # callable(line) opcional
-        self.notifications = []      # notificaciones recibidas (p.ej. tools listChanged)
+        self._stderr_sink = stderr_sink  # optional callable(line)
+        self.notifications = []      # notifications received (e.g. tools listChanged)
         self._protocol_version = "2024-11-05"
 
-    # --- ciclo de vida ------------------------------------------------------
+    # --- lifecycle ------------------------------------------------------------
     def start(self, timeout=60):
         self.proc = subprocess.Popen(
             self.cmd,
@@ -66,10 +66,10 @@ class McpBridge:
         return info
 
     def stop(self):
-        """Cierra el puente sin tocar los pipes que leen los hilos activos:
-        close() concurrente de un pipe en lectura hangulea en builds
-        free-threaded (3.13t, observado). El terminate/kill produce EOF y los
-        hilos daemon mueren solos."""
+        """Closes the bridge without touching the pipes the active threads
+        read: a concurrent close() of a pipe mid-read hangs on free-threaded
+        builds (3.13t, observed). terminate/kill produces EOF and the daemon
+        threads die on their own."""
         if not self.proc:
             return
         try:
@@ -91,7 +91,7 @@ class McpBridge:
                 except subprocess.TimeoutExpired:
                     pass
 
-    # --- transporte ---------------------------------------------------------
+    # --- transport ------------------------------------------------------------
     def _read_stream(self, stream):
         try:
             for line in stream:
@@ -119,7 +119,7 @@ class McpBridge:
 
     def _send(self, obj):
         if not self.proc or self.proc.poll() is not None:
-            raise McpError("el puente MCP no está vivo")
+            raise McpError("the MCP bridge is not alive")
         self.proc.stdin.write(json.dumps(obj, ensure_ascii=False) + "\n")
         self.proc.stdin.flush()
 
@@ -138,7 +138,7 @@ class McpBridge:
         except queue.Empty:
             with self._lock:
                 self._responses.pop(mid, None)
-            raise McpError("timeout esperando %s (%ss)" % (method, timeout))
+            raise McpError("timeout waiting for %s (%ss)" % (method, timeout))
         if "error" in resp:
             err = resp["error"]
             raise McpError("JSON-RPC %s: %s" % (err.get("code"), err.get("message")))
@@ -150,18 +150,18 @@ class McpBridge:
             msg["params"] = params
         self._send(msg)
 
-    # --- API MCP ------------------------------------------------------------
+    # --- MCP API --------------------------------------------------------------
     def list_tools(self):
         result = self.request("tools/list", {}, timeout=20)
         return result.get("tools", []) if result else []
 
     def call_tool(self, name, arguments=None, timeout=40):
-        """tools/call y desenmallado del envoltorio MCP {content:[{text}]}.
+        """tools/call and unwrap of the MCP {content:[{text}]} envelope.
 
-        Devuelve el dict ya parseado del handler de la página ({ok,data}/{ok,
-        error}), o {"_raw": texto} si no es JSON. Lanza McpToolError si el
-        puente marca isError (incluye 'Tool call timed out' del relay a los
-        30 s y 'No clients available in channel' si la pestaña se fue).
+        Returns the page handler's dict already parsed ({ok,data}/{ok,error}),
+        or {"_raw": text} if it is not JSON. Raises McpToolError when the
+        bridge marks isError (includes the relay's 'Tool call timed out' at
+        30 s and 'No clients available in channel' if the tab went away).
         """
         result = self.request("tools/call",
                               {"name": name, "arguments": arguments or {}},
@@ -176,26 +176,27 @@ class McpBridge:
         except (TypeError, json.JSONDecodeError):
             return {"_raw": text}
 
-    # --- helpers específicos del flujo webmcp -------------------------------
+    # --- webmcp flow helpers --------------------------------------------------
     def get_pairing_token(self) -> str:
-        """Token de emparejamiento: la tool local del puente `_webmcp_get-token`
-        (verificado: genera crypto-random 16B, lo escribe en
-        ~/.webmcp/.webmcp-tokens.json clave '/localhost_4797' y devuelve el
-        base64 de {"server":"ws://localhost:4797","token":...})."""
+        """Pairing token: the bridge's local tool `_webmcp_get-token`
+        (verified: generates crypto-random 16B, writes it to
+        ~/.webmcp/.webmcp-tokens.json under key '/localhost_4797' and returns
+        the base64 of {"server":"ws://localhost:4797","token":...})."""
         result = self.request("tools/call", {"name": "_webmcp_get-token", "arguments": {}})
         text = _content_text(result)
         for line in reversed([l for l in text.splitlines() if l.strip()]):
             return line.strip()
-        raise McpToolError("token vacío: %r" % text)
+        raise McpToolError("empty token: %r" % text)
 
     def find_checkers_tools(self, wanted=("checkers_get_state", "checkers_get_legal_moves",
                                           "checkers_play_move", "checkers_new_game",
                                           "checkers_undo", "checkers_wait_my_turn")):
-        """tools/list → mapa corto→full de las checkers_* emparejadas.
+        """tools/list -> short->full map of the paired checkers_* tools.
 
-        El daemon prefija con el canal: `localhost_8088-checkers_get_state`
-        (formato verificado en fuente y en vivo). Devuelve {} si aún no hay
-        pestaña emparejada.
+        The daemon prefixes with the channel: `<host>-checkers_get_state`,
+        e.g. `tabandblank_com-checkers_get_state` or `localhost_8088-...`
+        (format verified in the source and live). Returns {} while no tab is
+        paired yet.
         """
         out = {}
         for t in self.list_tools():
@@ -206,14 +207,14 @@ class McpBridge:
         return out
 
     def wait_paired(self, timeout=300, poll=2.0, log=print):
-        """Bloquea hasta que las 6 tools del juego aparezcan (pestaña emparejada)."""
+        """Blocks until the 6 game tools show up (a tab is paired)."""
         end = time.time() + timeout
         while time.time() < end:
             found = self.find_checkers_tools()
             if len(found) == 6:
                 return found
             time.sleep(poll)
-        raise McpError("no se emparejó ninguna pestaña en %ds (tools vistas: %d/6)"
+        raise McpError("no browser tab paired in %ds (tools seen: %d/6)"
                        % (timeout, len(self.find_checkers_tools())))
 
 
@@ -225,6 +226,6 @@ def _content_text(result):
 
 
 def npx_webmcp(flag: str):
-    """argv canónico del puente, el mismo que usa opencode."""
+    """Canonical argv of the bridge, the same one opencode uses."""
     exe = "npx.cmd" if sys.platform == "win32" else "npx"
     return [exe, "-y", "@jason.today/webmcp@latest", flag]

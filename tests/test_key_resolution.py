@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Resolución de la key de Qwen: orden env > formulario (memoria) > fichero
-legacy, y scrub de TODAS las keys vistas. Con valores FAKE: nunca se usa una
-key real en los tests y se comprueba que nada se escribe en disco."""
+"""Qwen key resolution: order env > form (memory) > legacy file, and scrub of
+ALL keys seen. With FAKE values: a real key is never used in the tests and we
+check nothing is written to disk."""
 
 import os
 import shutil
@@ -48,77 +48,77 @@ class TestKeyResolution(unittest.TestCase):
         with open(self.key_file, "w", encoding="utf-8") as fh:
             fh.write(value + "\n")
 
-    def test_env_gana_sobre_todo(self):
+    def test_env_wins_over_everything(self):
         os.environ[key_source.ENV_NAME] = FAKE_ENV
         self._write_legacy(FAKE_FILE)
-        self.holder.set(FAKE_FORM)          # aunque el formulario también tenga
+        self.holder.set(FAKE_FORM)          # even if the form also has one
         key, src = key_source.resolve_key(self.holder, self.key_file, self.log,
                                           form_timeout=1)
         self.assertEqual((key, src), (FAKE_ENV, "env"))
-        self.assertIn("variable de entorno", "\n".join(self.log.lines))
+        self.assertIn("environment variable", "\n".join(self.log.lines))
 
-    def test_formulario_si_no_hay_env(self):
+    def test_form_if_no_env(self):
         self._write_legacy(FAKE_FILE)
-        self.holder.set(FAKE_FORM)          # key ya pegada en la página
+        self.holder.set(FAKE_FORM)          # key already pasted on the page
         key, src = key_source.resolve_key(self.holder, self.key_file, self.log,
                                           form_timeout=1)
         self.assertEqual((key, src), (FAKE_FORM, "form"))
 
-    def test_formulario_llega_tarde(self):
+    def test_form_arrives_late(self):
         def late():
             import time
             time.sleep(0.3)
             self.holder.set(FAKE_FORM)
         threading.Thread(target=late, daemon=True).start()
-        key, src = key_source.resolve_key(self.holder, "/sin/fichero", self.log,
+        key, src = key_source.resolve_key(self.holder, "/no/file", self.log,
                                           form_timeout=5)
         self.assertEqual((key, src), (FAKE_FORM, "form"))
 
-    def test_fichero_legacy_ultimo_recurso_y_aviso(self):
+    def test_legacy_file_last_resource_with_warning(self):
         self._write_legacy(FAKE_FILE)
         key, src = key_source.resolve_key(self.holder, self.key_file, self.log,
-                                          allow_form=False)   # sin servidor (stub)
+                                          allow_form=False)   # no server (stub)
         self.assertEqual((key, src), (FAKE_FILE, "file"))
         joined = "\n".join(self.log.lines)
-        self.assertIn("AVISO (desaconsejado)", joined)
+        self.assertIn("WARNING (discouraged)", joined)
 
-    def test_sin_nada_error_claro_sin_fichero(self):
+    def test_nothing_at_all_clear_error_without_file(self):
         files_before = set(os.listdir(self.tmp))
         with self.assertRaises(AgentError) as ctx:
             key_source.resolve_key(self.holder, self.key_file, self.log,
                                    form_timeout=0.3)
         msg = str(ctx.exception)
-        self.assertIn(key_source.ENV_NAME, msg)   # dice qué hacer
-        self.assertIn("memoria", msg)
-        self.assertEqual(files_before, set(os.listdir(self.tmp)))  # cero disco
+        self.assertIn(key_source.ENV_NAME, msg)   # says what to do
+        self.assertIn("memory", msg)
+        self.assertEqual(files_before, set(os.listdir(self.tmp)))  # zero disk
 
-    def test_fichero_legacy_vacio_error(self):
+    def test_empty_legacy_file_error(self):
         with open(self.key_file, "w", encoding="utf-8") as fh:
             fh.write("   \n")
         with self.assertRaises(AgentError):
             key_source.resolve_key(self.holder, self.key_file, self.log,
                                    allow_form=False)
 
-    def test_scrub_maska_todas_las_keys_vistas(self):
+    def test_scrub_masks_every_key_seen(self):
         os.environ[key_source.ENV_NAME] = FAKE_ENV
-        key_source.resolve_key(self.holder, "/sin/fichero", self.log,
+        key_source.resolve_key(self.holder, "/no/file", self.log,
                                form_timeout=0)
-        self.holder.set(FAKE_FORM)                # y llegó otra por el formulario
-        text = "error con " + FAKE_ENV + " y " + FAKE_FORM
+        self.holder.set(FAKE_FORM)                # and another one arrived via form
+        text = "error with " + FAKE_ENV + " and " + FAKE_FORM
         scrubbed = self.holder.scrub(text)
         self.assertNotIn(FAKE_ENV, scrubbed)
         self.assertNotIn(FAKE_FORM, scrubbed)
         self.assertEqual(scrubbed.count(key_source.MASK), 2)
 
-    def test_holder_set_vacio_rechaza(self):
+    def test_holder_set_empty_is_refused(self):
         with self.assertRaises(ValueError):
             self.holder.set("   ")
 
 
 class TestGameLoggerScrub(unittest.TestCase):
-    """El logger con scrub=holder.scrub no deja escapar la key al fichero."""
+    """The logger with scrub=holder.scrub never lets the key out to the file."""
 
-    def test_log_file_no_contiene_key(self):
+    def test_log_file_does_not_contain_the_key(self):
         from game_session import GameLogger
         tmp = tempfile.mkdtemp()
         try:
@@ -126,7 +126,7 @@ class TestGameLoggerScrub(unittest.TestCase):
             log_path = os.path.join(tmp, "game.log")
             log = GameLogger(log_path, echo=False, scrub=holder.scrub)
             holder.set(FAKE_FORM)
-            log("recibida la key %s del formulario" % FAKE_FORM)
+            log("received the key %s from the form" % FAKE_FORM)
             with open(log_path, "r", encoding="utf-8") as fh:
                 content = fh.read()
             self.assertNotIn(FAKE_FORM, content)

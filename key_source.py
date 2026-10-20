@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Resolución del secreto Qwen sin depender de un fichero con la key dentro.
+"""Qwen secret resolution without depending on a file holding the key.
 
-Orden (petición del humano 2026-10-20):
-  1. variable de entorno ``QWEN_API_KEY``;
-  2. casilla de texto en la página de emparejamiento: POST /qwen-key al
-     http.server local → queda SOLO en memoria de este proceso (nunca en
-     disco, nunca en log);
-  3. LEGACY opcional y desaconsejado: ``[qwen] key_file`` del config (el
-     fichero local gitignored), solo si existe.
+Order (requested by the human 2026-10-20):
+  1. the ``QWEN_API_KEY`` environment variable;
+  2. text box on the pairing page: POST /qwen-key to the local http.server
+     -> stays ONLY in this process' memory (never disk, never log);
+  3. OPTIONAL DISCOURAGED LEGACY: ``[qwen] key_file`` from the config (the
+     local gitignored file), only if it exists.
 
-Nada de esto escribe ni loggea el secreto: todo texto pasa por el scrubber
-del `KeyHolder`, que maskara TODAS las keys vistas (env, formulario, fichero).
+None of this writes or logs the secret: every string passes through the
+`KeyHolder` scrubber, which masks ALL keys seen (env, form, file).
 """
 
 from __future__ import annotations
@@ -24,11 +23,11 @@ ENV_NAME = "QWEN_API_KEY"
 
 
 class KeyHolder:
-    """Guarda la(s) key(s) en memoria y sirve de scrubber para el logger.
+    """Keeps the key(s) in memory and doubles as the logger's scrubber.
 
-    - `set(key)`: llegada por el formulario (libera `wait`).
-    - `register(key)`: llegada por env/fichero (solo para el maskado).
-    - `scrub(text)`: callable compatible con GameLogger(scrub=...)."""
+    - `set(key)`: arrival via the form (releases `wait`).
+    - `register(key)`: arrival via env/legacy file (masking only).
+    - `scrub(text)`: callable compatible with GameLogger(scrub=...)."""
 
     def __init__(self):
         import threading
@@ -43,19 +42,19 @@ class KeyHolder:
     def set(self, key):
         key = str(key).strip()
         if not key:
-            raise ValueError("key vacía")
+            raise ValueError("empty key")
         self._remember(key)
         self._key = key
         self._event.set()
         return key
 
     def register(self, key):
-        """Apunta una key ya conocida (env/fichero) para que el scrub la
-        maskare desde el primer log, sin activar la espera del formulario."""
+        """Notes an already-known key (env/file) so scrub masks it from the
+        first log line, without arming the form wait."""
         self._remember(str(key).strip() if key else None)
 
     def wait(self, timeout):
-        """Espera una key por el formulario `timeout` s; None si no llega."""
+        """Waits `timeout` s for a key pasted in the form; None if it never arrives."""
         if self._event.wait(timeout):
             return self._key
         return None
@@ -72,33 +71,33 @@ class KeyHolder:
 
 def resolve_key(holder, key_file, log, form_timeout=300, allow_form=True,
                 env_name=ENV_NAME):
-    """Aplica el orden env > formulario(memoria) > fichero legacy.
+    """Applies the order env > form (memory) > legacy file.
 
-    Devuelve (key, fuente). Lanza AgentError con mensaje accionable si no
-    hay ninguna (no hay espera infinita: `form_timeout` + `--key-timeout`).
+    Returns (key, source). Raises AgentError with an actionable message when
+    there is none (no infinite wait: `form_timeout` + `--key-timeout`).
     """
-    # 1) variable de entorno
+    # 1) environment variable
     env_val = (os.environ.get(env_name) or "").strip()
     if env_val:
         holder.register(env_val)
-        log("qwen key: tomada de la variable de entorno %s" % env_name)
+        log("qwen key: taken from the environment variable %s" % env_name)
         return env_val, "env"
 
-    # 2) formulario de la página de emparejamiento (solo en memoria)
+    # 2) pairing page key box (process memory only)
     if allow_form:
-        log("qwen key: sin %s — pégala en la casilla de la página de "
-            "emparejamiento (%ds de margen; se queda SOLO en memoria de "
-            "este proceso) o usa la legacy key_file" % (env_name, form_timeout))
+        log("qwen key: no %s set - paste it in the pairing page key box "
+            "(%ds of slack; it stays ONLY in this process' memory) or use "
+            "the legacy key_file" % (env_name, form_timeout))
         key = holder.wait(form_timeout)
         if key:
-            log("qwen key: recibida por el formulario (memoria; nunca disco/log)")
+            log("qwen key: received from the form (memory; never disk, never log)")
             return key, "form"
     else:
-        key = holder.get()  # en modo stub no hay servidor: solo vale env/fichero
+        key = holder.get()  # stub mode has no local server: only env/file count
         if key:
             return key, "form"
 
-    # 3) legacy opcional: fichero local (desaconsejado: es un secreto en disco)
+    # 3) optional legacy: local file (discouraged: a secret on disk)
     if key_file and os.path.exists(key_file):
         import qwen_client
         try:
@@ -106,15 +105,15 @@ def resolve_key(holder, key_file, log, form_timeout=300, allow_form=True,
         except qwen_client.QwenError as e:
             raise AgentError("qwen key: %s" % holder.scrub(e))
         holder.register(key)
-        log("AVISO (desaconsejado): key leída del fichero legacy %s. Rota la "
-            "key y usa %s o la casilla de la página de emparejamiento."
+        log("WARNING (discouraged): key read from the legacy file %s. Rotate "
+            "the key and use %s or the pairing page key box."
             % (key_file, env_name))
         return key, "file"
 
     raise AgentError(
-        "no hay API key de Qwen: ponla en la casilla de la página de "
-        "emparejamiento (se queda solo en memoria), o define la variable de "
-        "entorno %s (Windows: setx %s \"sk-...\" y reabre la consola; ver "
-        "README). El fichero legacy [qwen] key_file sigue valiendo como "
-        "último recurso desaconsejado. Nada se ha guardado en disco."
+        "no Qwen API key: paste it in the pairing page key box (it stays in "
+        "memory only), or set the environment variable %s (Windows: setx %s "
+        "\"sk-...\" and reopen the console; see README). The legacy "
+        "[qwen] key_file still works as a discouraged last resort. Nothing "
+        "was saved to disk."
         % (env_name, env_name))

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""FIX UX 2026-10-20: al arrancar se abre SOLO /_pairing (open_pairing); el
-tablero nunca se abre salvo opt-in `--open local|prod` (open_links). `none`
-(default) y `--no-pairing-browser` no invocan webbrowser; los enlaces listados
-cubren local EN/ES y producción EN/ES, y /_pairing lleva token, casilla de la
-key y los 4 enlaces de juego. Nothing real here, solo URLs y strings."""
+"""UX fix 2026-10-20 + production-only flow (2026-10-20): on launch ONLY
+/_pairing opens (open_pairing); the board never opens unless opted in with
+`--open prod` (open_links). `none` (default) and `--no-pairing-browser` never
+touch webbrowser; the listed links are the 2 production ones (EN + ES on
+tabandblank.com - there is no local board anymore) and /_pairing carries the
+token, the key box and those links. Nothing real here, just URLs and strings."""
 
 import os
 import sys
@@ -16,14 +17,14 @@ import play_checkers   # noqa: E402
 
 
 class Boom:
-    """webbrowser sustituto: cualquier intento de abrir = fallo de test."""
+    """webbrowser stand-in: any attempt to open = test failure."""
     def open(self, *a, **kw):
-        raise AssertionError("webbrowser.open no debe invocarse "
+        raise AssertionError("webbrowser.open must not be called "
                              "(--open none / --no-pairing-browser)")
 
 
 class Spy:
-    """webbrowser sustituto que registra: prueba que el default SÍ abre."""
+    """webbrowser stand-in that records: proves the default DOES open."""
     def __init__(self):
         self.calls = []
 
@@ -34,13 +35,11 @@ class Spy:
 
 class TestOpenLinks(unittest.TestCase):
     def setUp(self):
-        self.links = play_checkers.build_links(
-            "http://localhost:8088", "/games/checkers/", "/es/juegos/checkers/",
-            "https://tabandblank.com")
+        self.links = play_checkers.build_links("https://tabandblank.com")
         self.pairing = "http://localhost:8088/_pairing"
         self.logs = []
 
-    def test_none_no_toca_el_navegador(self):
+    def test_none_never_touches_the_browser(self):
         real = play_checkers.webbrowser
         play_checkers.webbrowser = Boom()
         try:
@@ -50,21 +49,21 @@ class TestOpenLinks(unittest.TestCase):
             play_checkers.webbrowser = real
         self.assertEqual(opened, [])
         joined = "\n".join(self.logs)
-        self.assertIn("LOCAL", joined)   # los enlaces salen listados
-        self.assertIn("PROD", joined)
+        self.assertIn("PROD", joined)     # the links are still listed
         self.assertIn(self.pairing, joined)
 
-    def test_open_local_abre_solo_el_tablero(self):
-        """--open opta SOLO el tablero: el pairing se abrió ya en el arranque
-        (open_pairing); abrirlo dos veces serían pestañas duplicadas."""
+    def test_open_prod_opens_the_two_board_tabs(self):
+        """--open opts into the BOARD only: the pairing page already opened at
+        launch (open_pairing); opening it twice means duplicate tabs."""
         seen = []
-        opened = play_checkers.open_links("local", self.links, self.pairing,
+        opened = play_checkers.open_links("prod", self.links, self.pairing,
                                           opener=seen.append, log=lambda t: None)
-        self.assertEqual(opened, self.links["local"])
-        self.assertEqual(seen, self.links["local"])
+        self.assertEqual(opened, self.links["prod"])
+        self.assertEqual(seen, self.links["prod"])
+        self.assertEqual(len(seen), 2)                 # EN + ES
         self.assertNotIn(self.pairing, seen)
 
-    def test_open_prod_abre_solo_produccion(self):
+    def test_open_prod_only_the_public_domain(self):
         seen = []
         opened = play_checkers.open_links("prod", self.links, self.pairing,
                                           opener=seen.append, log=lambda t: None)
@@ -75,48 +74,49 @@ class TestOpenLinks(unittest.TestCase):
         args = play_checkers.build_argparser().parse_args([])
         self.assertEqual(args.open, "none")
         self.assertEqual(args.key_timeout, 300)
-        # por defecto el pairing SÍ se abre: el flag nuevo está apagado
+        # by default the pairing page DOES open: the flag is off
         self.assertFalse(args.no_pairing_browser)
 
-    def test_argparser_flags_nuevos(self):
+    def test_argparser_flags(self):
         args = play_checkers.build_argparser().parse_args(
             ["--serve-only", "--no-pairing-browser"])
         self.assertTrue(args.serve_only)
         self.assertTrue(args.no_pairing_browser)
-        args = play_checkers.build_argparser().parse_args(["--open", "local"])
-        self.assertEqual(args.open, "local")
+        args = play_checkers.build_argparser().parse_args(["--open", "prod"])
+        self.assertEqual(args.open, "prod")
         self.assertFalse(args.no_pairing_browser)
 
 
 class TestOpenPairing(unittest.TestCase):
-    """FIX UX: /_pairing (token + casilla) es lo único que se abre solo."""
+    """UX fix: /_pairing (token + key box) is the only thing that opens alone."""
 
-    def test_default_abre_solo_la_url_del_pairing(self):
+    def test_default_opens_only_the_pairing_url(self):
         seen = []
         opened = play_checkers.open_pairing("http://localhost:8088/_pairing",
                                             opener=seen.append, log=lambda t: None)
         self.assertEqual(opened, ["http://localhost:8088/_pairing"])
         self.assertEqual(seen, opened)
 
-    def test_flag_no_invoca_webbrowser(self):
-        """Humo (lo que hace main con --serve-only o normal + el flag): con
-        --no-pairing-browser el módulo NO toca el navegador, pero loguea la
-        URL para que el humano la abra a mano (SSH)."""
+    def test_flag_does_not_invoke_webbrowser(self):
+        """Smoke (what main does with --serve-only or normal mode + flag): with
+        --no-pairing-browser the module does NOT touch the browser, but it logs
+        the URL so the human opens it by hand (SSH)."""
         real = play_checkers.webbrowser
         play_checkers.webbrowser = Boom()
         logs = []
         try:
             opened = play_checkers.open_pairing("http://localhost:8088/_pairing",
-                                                no_pairing_browser=True,
-                                                log=logs.append)
+                                                 no_pairing_browser=True,
+                                                 log=logs.append)
         finally:
             play_checkers.webbrowser = real
         self.assertEqual(opened, [])
         self.assertIn("http://localhost:8088/_pairing", "\n".join(logs))
 
-    def test_default_si_invoca_el_webbrowser_del_modulo(self):
-        """Sin el flag el default SÍ abre: mismo monkeypatch que los de --open,
-        pero por la ruta del módulo (webbrowser.open), no por parámetro."""
+    def test_default_does_invoke_the_module_webbrowser(self):
+        """Without the flag the default DOES open: same monkeypatch as the
+        --open tests, but through the module path (webbrowser.open), not a
+        parameter."""
         real = play_checkers.webbrowser
         spy = Spy()
         play_checkers.webbrowser = spy
@@ -130,32 +130,27 @@ class TestOpenPairing(unittest.TestCase):
 
 
 class TestBuildLinksAndPairing(unittest.TestCase):
-    def test_cuatro_enlaces(self):
-        links = play_checkers.build_links(
-            "http://localhost:8088", "/games/checkers/", "/es/juegos/checkers/",
-            "https://tabandblank.com")
-        self.assertEqual(links["local"],
-                         ["http://localhost:8088/games/checkers/",
-                          "http://localhost:8088/es/juegos/checkers/"])
+    def test_two_production_links(self):
+        """Production is the ONLY board channel: exactly 2 links (EN + ES),
+        both on tabandblank.com, no localhost among them."""
+        links = play_checkers.build_links("https://tabandblank.com")
+        self.assertEqual(set(links), {"prod"})
         self.assertEqual(links["prod"],
                          ["https://tabandblank.com/games/checkers/",
                           "https://tabandblank.com/es/juegos/checkers/"])
 
-    def test_pairing_page_tiene_casilla_y_enlaces(self):
-        links = play_checkers.build_links(
-            "http://localhost:8088", "/games/checkers/", "/es/juegos/checkers/",
-            "https://tabandblank.com")
+    def test_pairing_page_has_key_box_and_links(self):
+        links = play_checkers.build_links("https://tabandblank.com")
         html = play_checkers.render_pairing("TOKEN-FAKE", links,
                                             "http://localhost:8088/_pairing")
         self.assertIn("TOKEN-FAKE", html)
-        self.assertIn("/qwen-key", html)                 # el fetch del botón
-        self.assertIn('type="password"', html)           # casilla de la key
-        self.assertIn("Guardar key", html)
-        self.assertIn("solo en", html)
-        self.assertIn("memoria", html)                   # promesa de la casilla
-        # los 4 enlaces del tablero: quien cae en /_pairing primero (ahora se
-        # abre sola) debe poder elegir canal desde la propia página
-        for u in links["local"] + links["prod"]:
+        self.assertIn("/qwen-key", html)                 # the button's fetch
+        self.assertIn('type="password"', html)           # the key box
+        self.assertIn("Save key", html)
+        self.assertIn("in memory only", html)            # the box's promise
+        # the 2 board links: whoever lands on /_pairing first (it opens alone
+        # now) must be able to open the board from the page itself
+        for u in links["prod"]:
             self.assertIn(u, html)
 
 

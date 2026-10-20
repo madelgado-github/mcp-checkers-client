@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Prueba del bucle completo contra el STUB del puente (sin navegador ni red).
+"""Full-loop test against the bridge STUB (no browser, no network).
 
-Demuestra (b) del encargo: handshake MCP real (ndjson) → detección de las 6
-tools emparejadas → new_game → wait_my_turn → get_legal_moves → picker →
-play_move → … → game over, con el protocolo de resultados exacto del glue
-({ok,data}/{ok,error}, prefijo de canal `localhost_8088-`).
+It demonstrates (b) of the assignment: a real MCP handshake (ndjson) ->
+detection of the 6 paired tools -> new_game -> wait_my_turn ->
+get_legal_moves -> picker -> play_move -> ... -> game over, with the exact
+result protocol of the glue ({ok,data}/{ok,error}, default channel prefix
+`tabandblank_com-` — the production format).
 """
 
 import json
@@ -39,10 +40,11 @@ class TestStubLoop(unittest.TestCase):
     def tearDown(self):
         self.bridge.stop()
 
-    def test_handshake_y_lista(self):
+    def test_handshake_and_listing(self):
         self.assertEqual(len(self.tools), 6)
         for short, full in self.tools.items():
-            self.assertTrue(full.startswith("localhost_8088-"), full)
+            # default stub channel = the production prefix (tabandblank_com-)
+            self.assertTrue(full.startswith("tabandblank_com-"), full)
 
     def test_token_via_tool(self):
         tok = self.bridge.get_pairing_token()
@@ -50,18 +52,18 @@ class TestStubLoop(unittest.TestCase):
         self.assertEqual(data["server"], "ws://localhost:4797")
         self.assertEqual(len(data["token"]), 32)
 
-    def test_partida_guionizada_3_ciclos(self):
+    def test_scripted_game_3_cycles(self):
         log = QuietLog()
         session = GameSession(self.bridge, self.tools, HeuristicPlayer(), log)
         session.new_game("medium")
         summary = session.run(max_turns=10, wait_seconds=1)
         self.assertEqual(summary["reason"], "game_over")
-        self.assertEqual(summary["winner"], 2)       # gana el agente (state "lost" para P1)
+        self.assertEqual(summary["winner"], 2)       # the agent wins (state "lost" for P1)
         self.assertEqual(summary["turns"], 3)
         joined = "\n".join(log.lines)
-        self.assertIn("FIN:", joined)
+        self.assertIn("GAME OVER:", joined)
 
-    def test_play_move_valida_contra_lista_del_stub(self):
+    def test_play_move_validated_against_stub_list(self):
         res = self.bridge.call_tool(self.tools["checkers_new_game"], {})
         self.assertTrue(res["ok"])
         bad = self.bridge.call_tool(self.tools["checkers_play_move"],
@@ -73,10 +75,10 @@ class TestStubLoop(unittest.TestCase):
         self.assertTrue(good["ok"])
         st = self.bridge.call_tool(self.tools["checkers_get_state"], {})
         self.assertEqual(len(st["data"]["cells"]), 64)
-        # tras la jugada del agente el guion mueve al humano: cp puede ser 1 o 2
+        # after the agent's move the script moves the human: cp can be 1 or 2
         self.assertIn(st["data"]["current_player"], (1, 2))
 
-    def test_wait_inmediata_si_ya_es_turno(self):
+    def test_wait_immediate_when_already_turn(self):
         self.bridge.call_tool(self.tools["checkers_new_game"], {})
         w = self.bridge.call_tool(self.tools["checkers_wait_my_turn"],
                                   {"timeout_seconds": 1})
@@ -86,10 +88,10 @@ class TestStubLoop(unittest.TestCase):
 
 
 class TestPickerFallback(unittest.TestCase):
-    """Un jugador que responde basura no puede romper el loop: GameSession
-    delega la legalidad en el picker y en Godot; aquí se prueba el camino
-    play_move->error->re-loop usando un picker que elige una jugada inexistente
-    DOS veces y luego acierta (el stub contesta illegal_move primero)."""
+    """A player answering garbage cannot break the loop: GameSession delegates
+    legality to the picker and to the page; here the
+    play_move->error->re-loop path is exercised with a picker that picks a
+    non-existent move TWICE and then hits (the stub answers illegal_move first)."""
 
     class FlakyPicker:
         def __init__(self, moves_pool):
@@ -99,12 +101,12 @@ class TestPickerFallback(unittest.TestCase):
         def choose(self, board_text, moves, legal_lines):
             self.n += 1
             if self.n == 1:
-                # jugada que no está en `moves`: Godot la rechazará
+                # a move that is NOT in `moves`: the page will reject it
                 fake = {"from": 63, "path": [0], "captured": []}
-                return fake, "intentó ilegal", None
+                return fake, "tried an illegal move", None
             return moves[0], "ok", None
 
-    def test_reloop_tras_illegal(self):
+    def test_reloop_after_illegal(self):
         bridge = mcp_stdio.McpBridge(STUB)
         bridge.start(timeout=30)
         try:

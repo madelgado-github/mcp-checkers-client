@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Cliente Qwen Cloud (OpenAI-compatible) para elegir jugada de Damas.
+"""Qwen Cloud (OpenAI-compatible) client for picking Checkers moves.
 
-Endpoint probado en vivo (2026-10-20):
+Endpoint verified live (2026-10-20):
   base_url = https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-  (el del plan de tokens `alibaba-token-plan`; https://coding.dashscope.aliyuncs.com/v1
-   responde 401 invalid_api_key con esta key: es el plan Coding, no el de tokens).
+  (the token-plan one, `alibaba-token-plan`; https://coding.dashscope.aliyuncs.com/v1
+   answers 401 invalid_api_key with this key: that is the Coding plan, not tokens).
 
-La API key llega por `key_source.resolve_key` (orden: env QWEN_API_KEY >
-formulario de emparejamiento en memoria > fichero legacy `key_file`, este ya
-desaconsejado). Todo texto que sale de aquí pasa por `scrub()`, que la maskara
-aunque un error de la librería la contenga.
+The API key arrives via `key_source.resolve_key` (order: env QWEN_API_KEY >
+pairing form in memory > legacy `key_file` file, the latter already
+discouraged). Every string leaving here goes through `scrub()`, which masks
+the key even if some library error contains it.
 """
 
 from __future__ import annotations
@@ -28,38 +28,38 @@ def load_key(path) -> str:
     with open(path, "r", encoding="utf-8") as fh:
         key = fh.read().strip()
     if not key:
-        raise QwenError("no hay API key en %s" % path)
+        raise QwenError("no API key in %s" % path)
     return key
 
 
-SYSTEM_PROMPT = """Eres el jugador P2 (fichas x/X) en una partida de Damas \
-inglesas 8x8 contra un humano (P1, fichas o/O). El tablero se recibe como 64 \
-casillas con índice i = fila*8 + columna (fila 0 arriba; las fichas del agente \
-corren hacia filas mayores). Capturas obligatorias: si hay cadena, solo esas \
-jugadas aparecen en la lista legal.
+SYSTEM_PROMPT = """You are player P2 (pieces x/X) in an 8x8 English-checkers \
+game against a human (P1, pieces o/O). The board arrives as 64 cells with \
+index i = row*8 + column (row 0 on top; the agent's pieces run toward higher \
+rows). Captures are mandatory: if a chain exists, only those moves appear in \
+the legal list.
 
-Debes elegir EXACTAMENTE una jugada de la lista de jugadas legales y responder \
-SOLO un JSON (sin texto extra) con la forma:
-{"from": <indice>, "to": <indice del destino final>, "comentario": "<breve>"}
-Para una cadena de saltos, "to" es la última casilla del path. No inventes \
-jugadas: solo las listadas son válidas."""
+You must choose EXACTLY one move from the legal-move list and answer with a \
+single JSON only (no extra text), shaped:
+{"from": <index>, "to": <final destination index>, "comment": "<brief>"}
+For a jump chain, "to" is the last cell of the path. Do not invent moves: \
+only the listed ones are valid."""
 
 
 class QwenClient:
-    """Chat Completions mínimo; los fallos de red se reintentan con backoff.
+    """Minimal Chat Completions; network failures are retried with backoff.
 
-    401/403 se lanzan terminales (no sirve reintentar una key inválida).
+    401/403 are raised as terminal (retrying an invalid key is pointless).
     """
 
     def __init__(self, base_url, model, api_key, timeout=90, retries=2,
                  enable_thinking=None, on_event=None):
-        """`enable_thinking`: False/True se manda en el body; None = NO se
-        manda (endpoints que no conocen el flag). Con False, el endpoint
-        token-plan de qwen3.8-flash responde en ~2 s en vez de 2-3 min
-        (razonamiento desactivado; medido en vivo 2026-10-20).
-        `on_event`: callable(str) para trazabilidad del bucle (consultando
-        modelo / tiempo empleado / motivo de cada retry); el caller lo pasa
-        al logger (el texto ya sale scrubbeado de aquí)."""
+        """`enable_thinking`: False/True is sent in the body; None = NOT sent
+        (endpoints that do not know the flag). With False, the token-plan
+        endpoint of qwen3.8-flash answers in ~2 s instead of 2-3 min
+        (reasoning disabled; measured live 2026-10-20).
+        `on_event`: callable(str) for loop traceability (querying model /
+        elapsed time / reason of each retry); the caller pipes it into the
+        logger (text already comes scrubbed from here)."""
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
@@ -69,7 +69,7 @@ class QwenClient:
         self.on_event = on_event
 
     def scrub(self, text):
-        """Nunca dejar escapar la key por logs/excepciones."""
+        """Never let the key escape into logs/exceptions."""
         return str(text).replace(self.api_key, "***MASKED***")
 
     def _emit(self, text):
@@ -78,11 +78,11 @@ class QwenClient:
         try:
             self.on_event(self.scrub(text))
         except Exception:
-            pass  # la trazabilidad nunca rompe una jugada
+            pass  # traceability never breaks a move
 
     def _thinking_label(self):
         if self.enable_thinking is None:
-            return "sin flag"
+            return "no flag"
         return "on" if self.enable_thinking else "off"
 
     def chat(self, messages):
@@ -91,7 +91,7 @@ class QwenClient:
         if self.enable_thinking is not None:
             payload["enable_thinking"] = bool(self.enable_thinking)
         body = json.dumps(payload).encode("utf-8")
-        self._emit("consultando modelo %s (timeout %ds, thinking %s)..."
+        self._emit("querying model %s (timeout %ds, thinking %s)..."
                    % (self.model, self.timeout, self._thinking_label()))
         t0 = time.monotonic()
         last_err = None
@@ -103,7 +103,7 @@ class QwenClient:
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-                self._emit("modelo respondió en %.1fs" % (time.monotonic() - t0))
+                self._emit("model responded in %.1fs" % (time.monotonic() - t0))
                 return data["choices"][0]["message"]["content"]
             except urllib.error.HTTPError as e:
                 detail = ""
@@ -113,50 +113,51 @@ class QwenClient:
                     pass
                 masked = self.scrub("HTTP %d %s" % (e.code, detail))
                 if e.code in (401, 403):
-                    self._emit("aborto: autenticación rechazada (%s)" % masked[:160])
-                    raise QwenError("Qwen rechazó la autenticación: %s" % masked)
+                    self._emit("aborting: authentication rejected (%s)" % masked[:160])
+                    raise QwenError("Qwen rejected the authentication: %s" % masked)
                 last_err = masked
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last_err = self.scrub("%s: %s" % (type(e).__name__, e))
             if attempt < self.retries:
                 wait = 1.5 * (attempt + 1)
-                self._emit("intento %d/%d falló (%s): reintento en %.1fs"
+                self._emit("attempt %d/%d failed (%s): retrying in %.1fs"
                            % (attempt + 1, self.retries + 1,
                               last_err[:160], wait))
                 time.sleep(wait)
-        self._emit("modelo sin respuesta tras %d intentos (%.1fs)"
+        self._emit("model silent after %d attempts (%.1fs)"
                    % (self.retries + 1, time.monotonic() - t0))
-        raise QwenError("Qwen no respondió tras %d intentos: %s" % (self.retries + 1, last_err))
+        raise QwenError("Qwen did not answer after %d attempts: %s" % (self.retries + 1, last_err))
 
     def build_messages(self, board_text, legal_moves, note=None, prev=None):
-        """messages para una decisión. `prev`: [(pregunta_anterior, cruda)] para
-        el re-pregunto por jugada ilegal; `note`: aviso al re-preguntar."""
+        """Messages for one decision. `prev`: [(previous_ask, raw)] for the
+        single re-ask after an illegal move; `note`: warning when re-asking."""
         msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
         if prev:
             for _ask, ans in prev[-1:]:
                 msgs.append({"role": "assistant", "content": ans})
-        content = ("TABLERO (índices = y*8+x):\n%s\n\nJUGADAS LEGALES (from->to):\n%s\n\n%s"
-                   "Responde solo el JSON {\"from\":..,\"to\":..,\"comentario\":..}."
+        content = ("BOARD (indices = y*8+x):\n%s\n\nLEGAL MOVES (from->to):\n%s\n\n%s"
+                   "Answer with the JSON {\"from\":..,\"to\":..,\"comment\":..} only."
                    % (board_text, "\n".join(legal_moves),
-                      (("NOTA: " + note + "\n\n") if note else "")))
+                      (("NOTE: " + note + "\n\n") if note else "")))
         msgs.append({"role": "user", "content": content})
         return msgs
 
 
 class LLMPicker:
-    """Elegidor de jugada usando un cliente LLM. Contratos de robustez:
+    """Move chooser backed by an LLM client. Robustness contract:
 
-    - responde cruda ilegal → re-pregunta UNA vez con la nota del error;
-    - sigue ilegal → toma la primera legal (nunca crashes);
-    - el LLM muere (red/401) → QwenError propagado SOLO si no hay alternativa;
-      aquí optamos por primera legal + aviso en `note`, el loop no se rompe.
+    - raw reply illegal -> re-ask ONCE with the error note;
+    - still illegal -> take the first legal move (never crashes);
+    - the LLM dies (network/401) -> QwenError is propagated ONLY if there is
+      no alternative; here we opt for the first legal move + a `note` warning,
+      the loop does not break.
     """
 
     def __init__(self, client: QwenClient):
         self.client = client
 
     def choose(self, board_text, moves, legal_lines):
-        """Devuelve (move_canonica, crudo_respuesta, aviso_o_None)."""
+        """Returns (canonical_move, raw_reply, warning_or_None)."""
         import board as B
         prev = []
         note = None
@@ -167,7 +168,7 @@ class LLMPicker:
             try:
                 raw = self.client.chat(msgs)
             except QwenError as e:
-                why = "LLM sin respuesta: %s" % self.client.scrub(e)  # red/auth: a fallback
+                why = "LLM no answer: %s" % self.client.scrub(e)  # network/auth: go fallback
                 break
             parsed = B.parse_move_json(raw)
             if parsed:
@@ -176,10 +177,10 @@ class LLMPicker:
                 if move is not None:
                     return move, raw[:400], None
             prev.append((None, raw))
-            note = ("La jugada propuesta no está en la lista legal. Elige una "
-                    "exactamente como se listó, {\"from\":..,\"to\":..}.")
+            note = ("The move proposed is not in the legal list. Pick one "
+                    "exactly as listed, {\"from\":..,\"to\":..}.")
         if not moves:
-            raise QwenError("sin jugadas legales y sin respuesta útil del LLM")
+            raise QwenError("no legal moves and no useful answer from the LLM")
         if why is None:
-            why = "LLM propuso ilegal dos veces"
-        return moves[0], raw[:400], why + ": se juega la primera legal"
+            why = "LLM proposed an illegal move twice"
+        return moves[0], raw[:400], why + ": playing the first legal move"

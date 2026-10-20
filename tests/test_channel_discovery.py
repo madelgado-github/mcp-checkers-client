@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""El descubrimiento de tools es por SUFIJO (`checkers_*`), NO por prefijo de
-canal: con el sitio publicado las tools salen p. ej. bajo `tabandblank_com-`
-(canal = window.location.host con `.` y `:` → `_`, verificado en la fuente de
-@jason.today/webmcp) y el bucle funciona igual. Se prueba con nombres
-simulados y con el stub entero arrancado en "canal producción"."""
+"""Tool discovery is by SUFFIX (`checkers_*`), NOT by channel prefix: on the
+published site the tools come out e.g. under `tabandblank_com-` (channel =
+window.location.host with `.` and `:` -> `_`, verified in the
+@jason.today/webmcp source) and the loop works the same. Tested with simulated
+names and with the whole stub running on an overridden channel (the default
+stub prefix IS the production one now, so here we override to a different
+value to prove the env switch still works)."""
 
 import os
 import sys
@@ -21,28 +23,28 @@ WANTED = ("checkers_get_state", "checkers_get_legal_moves", "checkers_play_move"
 
 
 def bridge_listing_fake(names):
-    """McpBridge sin proceso: solo list_tools() mockeado, como si tools/list
-    respondiera con esos nombres ya prefijados por el canal."""
+    """McpBridge without a process: only list_tools() mocked, as if tools/list
+    answered with those names already channel-prefixed."""
     b = mcp_stdio.McpBridge([sys.executable])
     b.list_tools = lambda: [{"name": n} for n in names]
     return b
 
 
-class TestDiscoveryPorSufijo(unittest.TestCase):
-    def test_prefijo_produccion_sin_hardcode(self):
+class TestDiscoveryBySuffix(unittest.TestCase):
+    def test_production_prefix_without_hardcode(self):
         names = ["tabandblank_com-" + w for w in WANTED]
         found = bridge_listing_fake(names).find_checkers_tools()
         self.assertEqual(sorted(found), sorted(WANTED))
         self.assertEqual(found["checkers_get_state"],
                          "tabandblank_com-checkers_get_state")
 
-    def test_cualquier_prefijo_vale(self):
+    def test_any_prefix_is_valid(self):
         names = ["192_168_1_5_8088-" + w for w in WANTED]
         self.assertEqual(len(bridge_listing_fake(names).find_checkers_tools()), 6)
 
-    def test_localhost_no_es_el_unico_canal_reconocido(self):
-        # el mapeo antiguo (localhost_8088) sigue sin hardcodearse: se comprueba
-        # que la lista corta no contiene ni "localhost" ni el puerto
+    def test_no_channel_is_the_only_recognized_one(self):
+        # the old mapping (localhost_8088) is still not hardcoded anywhere: we
+        # check the short list contains neither "localhost" nor the port
         found = bridge_listing_fake(["tabandblank_com-" + w for w in WANTED]) \
             .find_checkers_tools()
         joined = " ".join(sorted(found))
@@ -50,11 +52,13 @@ class TestDiscoveryPorSufijo(unittest.TestCase):
         self.assertNotIn("8088", joined)
 
 
-class TestLoopCanalProduccion(unittest.TestCase):
-    """Bucle real contra el stub arrancado con canal simulado de producción."""
+class TestLoopOverriddenChannel(unittest.TestCase):
+    """Real loop against the stub launched with an overridden channel prefix
+    (the stub's DEFAULT is `tabandblank_com-` now; overriding to another
+    value proves WEBMCP_STUB_CHANNEL_PREFIX keeps working)."""
 
     def setUp(self):
-        os.environ["WEBMCP_STUB_CHANNEL_PREFIX"] = "tabandblank_com-"
+        os.environ["WEBMCP_STUB_CHANNEL_PREFIX"] = "localhost_8088-"
         self.bridge = mcp_stdio.McpBridge(STUB)
         self.bridge.start(timeout=30)
 
@@ -62,13 +66,13 @@ class TestLoopCanalProduccion(unittest.TestCase):
         self.bridge.stop()
         os.environ.pop("WEBMCP_STUB_CHANNEL_PREFIX", None)
 
-    def test_tools_mapeadas_con_prefijo_externo(self):
+    def test_tools_mapped_with_external_prefix(self):
         tools = self.bridge.find_checkers_tools()
         self.assertEqual(len(tools), 6)
         for full in tools.values():
-            self.assertTrue(full.startswith("tabandblank_com-"), full)
+            self.assertTrue(full.startswith("localhost_8088-"), full)
 
-    def test_partida_completa_por_sufijo(self):
+    def test_full_game_via_suffix(self):
         tools = self.bridge.find_checkers_tools()
         log_lines = []
         session = GameSession(self.bridge, tools, HeuristicPlayer(),

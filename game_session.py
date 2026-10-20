@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Bucle de partida humano-vs-agente sobre las tools `checkers_*`.
+"""Human-vs-agent game loop over the `checkers_*` tools.
 
-El contrato de las tools checkers_* está documentado en el README (sección
-Contrato): la lista real de tools del glue de la página de Damas (6 tools,
-nombres exactos `checkers_*`; `play_move` recibe {from, path} — NO {from,to}).
+The checkers_* tool contract is documented in the README (Contract section):
+the page glue's real tool list (6 tools, exact names `checkers_*`;
+`play_move` takes {from, path} — NOT {from,to}).
 
-Limitación verificada en la fuente del relay (v0.1.12/0.1.13): los dos tramos
-(del puente stdio y del daemon) cortan un tools/call a los **30 s**. Por eso
-`wait_my_turn` se pide con timeout 20 s (<30) y el loop re-espera ante
-`timeout:true`; jamás usa el default de 60 s del glue.
+Limitation verified in the relay source (v0.1.12/0.1.13): the two legs
+(stdio bridge and daemon) cut any tools/call at **30 s**. That is why
+`wait_my_turn` is requested with a 20 s timeout (<30) and the loop re-waits
+on `timeout:true`; it never uses the glue's 60 s default.
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ class AgentError(Exception):
 
 
 class HeuristicPlayer:
-    """Rival del loop para tests/demo sin gastar LLM: captura máxima o primera."""
+    """Loop opponent for tests/demos without spending LLM calls: max capture
+    or first move."""
 
     def choose(self, board_text, moves, legal_lines):
         best = max(moves, key=lambda m: len(m.get("captured", []) or []))
@@ -29,7 +30,7 @@ class HeuristicPlayer:
 
 
 class GameLogger:
-    """Log de decisiones en game.log (sin key: todo texto pasa por scrub)."""
+    """Decision log in game.log (key-free: every line goes through scrub)."""
 
     def __init__(self, path, echo=True, scrub=None):
         self.path = path
@@ -48,8 +49,8 @@ class GameLogger:
 
 
 class GameSession:
-    """Turnos del agente. `bridge`: objeto con call_tool(name,args,timeout);
-    `tools`: mapa nombre_corto->nombre_con_prefijo del canal."""
+    """Agent turns. `bridge`: object with call_tool(name,args,timeout);
+    `tools`: map short_name->channel-prefixed name."""
 
     def __init__(self, bridge, tools, picker, log):
         self.bridge = bridge
@@ -57,26 +58,26 @@ class GameSession:
         self.picker = picker
         self.log = log
 
-    # --- helpers de tool ----------------------------------------------------
+    # --- tool helpers -------------------------------------------------------
     def _call(self, short, args=None, timeout=40):
         name = self.tools.get(short)
         if name is None:
-            raise AgentError("tool no emparejada: %s" % short)
+            raise AgentError("tool not paired: %s" % short)
         return self.bridge.call_tool(name, args or {}, timeout=timeout)
 
     @staticmethod
     def _data(payload):
-        """Los handlers devuelven {ok:true,data:{...}} o {ok:false,error,...}."""
+        """Handlers return {ok:true,data:{...}} or {ok:false,error,...}."""
         return payload.get("data") if isinstance(payload, dict) else None
 
-    # --- API de partida -----------------------------------------------------
+    # --- game API -----------------------------------------------------------
     def new_game(self, difficulty=None):
         args = {"difficulty": difficulty} if difficulty else {}
         res = self._call("checkers_new_game", args)
         data = self._data(res) or {}
         if not res.get("ok"):
             raise AgentError("new_game: %s" % res.get("error", res))
-        self.log("new_game ok (difficulty=%s, sale primero jugador %s)"
+        self.log("new_game ok (difficulty=%s, first to move is player %s)"
                  % (data.get("difficulty", "?"), data.get("current_player")))
         return data
 
@@ -84,46 +85,47 @@ class GameSession:
         for i in range(n):
             res = self._call("checkers_undo")
             data = self._data(res) or {}
-            self.log("undo %d/%d: undone=%s (retira el par humano+agente)"
+            self.log("undo %d/%d: undone=%s (removes the human+agent pair)"
                      % (i + 1, n, data.get("undone")))
         return self._call("checkers_get_state")
 
     def run(self, max_turns=120, wait_seconds=20, max_idle_waits=90):
-        """Bcle estrella (F6): wait_my_turn → snapshot → legal_moves → picker →
-        play_move, hasta game over, cancelación o tope. Devuelve resumen."""
+        """Main loop (F6): wait_my_turn -> snapshot -> legal_moves -> picker ->
+        play_move, until game over, cancellation or the move cap. Returns a
+        summary dict."""
         import board as B
         played = 0
         idle_waits = 0
         while True:
-            # 1) esperar el turno (push ~1 s; timeout < 30 s del relay)
+            # 1) wait for the turn (push ~1 s; timeout < the relay's 30 s)
             try:
                 w = self._call("checkers_wait_my_turn", {"timeout_seconds": wait_seconds})
             except Exception as e:
-                raise AgentError("puente caído o pestaña cerrada: %s" % e)
+                raise AgentError("bridge down or tab closed: %s" % e)
             data = self._data(w) or {}
             if not w.get("ok"):
-                if w.get("error") == "busy":       # >3 esperas: improbable, reintentar
+                if w.get("error") == "busy":       # >3 waits: unlikely, retry
                     time.sleep(2)
                     continue
                 raise AgentError("wait_my_turn: %s" % w.get("error"))
             if data.get("cancelled"):
-                self.log("el humano desmarcó 'Permitir agente': la IA interna retoma. Fin.")
+                self.log("the human unchecked 'Allow agent': the internal AI takes over. Ending.")
                 return {"reason": "cancelled", "turns": played}
             if data.get("reason") == "game_over" or data.get("state") in ("won", "lost"):
                 return self._finish(data, played)
             if data.get("timeout"):
                 idle_waits += 1
                 if idle_waits % 3 == 1:
-                    self.log("el humano no mueve (espera %d x %ds)..." % (idle_waits, wait_seconds))
+                    self.log("the human is not moving (wait %d x %ds)..." % (idle_waits, wait_seconds))
                 if idle_waits >= max_idle_waits:
-                    raise AgentError("sin jugada humana en ~%d s: plantón."
+                    raise AgentError("no human move in ~%d s: standoff, giving up."
                                      % (idle_waits * wait_seconds))
                 continue
             idle_waits = 0
             if data.get("current_player") != B.AGENT_PLAYER:
-                continue                            # defensivo: aún no es su turno
+                continue                            # defensive: not its turn yet
 
-            # 2) lectura de jugadas legales (ver Contrato)
+            # 2) read the legal moves (see Contract)
             lm = self._call("checkers_get_legal_moves")
             if not lm.get("ok"):
                 if lm.get("error") == "not_playing":
@@ -135,28 +137,28 @@ class GameSession:
                 st = self._data(self._call("checkers_get_state")) or {}
                 return self._finish(st, played)
 
-            # 3) decisión (LLM o heurística) y jugada validada por la web
+            # 3) decision (LLM or heuristic) and web-validated move
             cells = (data.get("cells") or [0] * 64)
             board_text = B.render(cells)
             legal_lines = B.moves_for_prompt(moves)
-            self.log("turno %d: %s\n%s" % (played + 1, " | ".join(legal_lines[:8]), board_text))
+            self.log("turn %d: %s\n%s" % (played + 1, " | ".join(legal_lines[:8]), board_text))
             move, raw, warn = self.picker.choose(board_text, moves, legal_lines)
             if warn:
-                self.log("AVISO picker: %s" % warn)
+                self.log("picker warning: %s" % warn)
             payload = B.canonical_payload(move)
             res = self._call("checkers_play_move", payload)
             d = self._data(res) or {}
             if not res.get("ok"):
                 err = res.get("error")
                 if err == "not_your_turn":
-                    self.log("play_move: not_your_turn (carrera con el humano): re-espero")
+                    self.log("play_move: not_your_turn (race with the human): waiting again")
                     continue
                 if err in ("illegal_move", "busy", "bad_args"):
-                    self.log("play_move rechazada (%s): recalcular" % err)
+                    self.log("play_move rejected (%s): recomputing" % err)
                     continue
                 raise AgentError("play_move: %s" % err)
             played += 1
-            self.log("jugada %d: %s -> %s capturas=%s (estado %s, winner %s) [%s]"
+            self.log("move %d: %s -> %s captures=%s (state %s, winner %s) [%s]"
                      % (played, payload["from"], payload["path"],
                         d.get("captured"), d.get("state"), d.get("winner"),
                         (raw[:80] if isinstance(raw, str) else raw)))
@@ -164,14 +166,14 @@ class GameSession:
                 snap = self._data(self._call("checkers_get_state")) or d
                 return self._finish(snap, played)
             if played >= max_turns:
-                raise AgentError("máximo de jugadas del agente alcanzado (%d)" % max_turns)
+                raise AgentError("agent move limit reached (%d)" % max_turns)
 
     def _finish(self, snap, played):
         winner = snap.get("winner", 0)
         state = snap.get("state", "?")
-        txt = ("FIN: state=%s winner=%s (%s) tras %d jugadas del agente"
+        txt = ("GAME OVER: state=%s winner=%s (%s) after %d agent moves"
                % (state, winner,
-                  {1: "gana el humano", 2: "gana el agente"}.get(winner, "sin ganador"),
+                  {1: "the human wins", 2: "the agent wins"}.get(winner, "no winner"),
                   played))
         self.log(txt)
         return {"reason": "game_over", "winner": winner, "state": state, "turns": played}

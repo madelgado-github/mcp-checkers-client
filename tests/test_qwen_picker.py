@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Tests del jugador Qwen: parseo robusto, re-pregunta 1 vez, fallback primera
-legal, maskara de la key. Con cliente FAKED: sin red (herméticos)."""
+"""Tests for the Qwen player: robust parsing, re-ask ONCE, first-legal
+fallback, key masking. With a FAKED client: no network (hermetic)."""
 
 import os
 import sys
@@ -16,7 +16,7 @@ MOVES = [
     {"from": 21, "path": [17], "captured": [18]},
     {"from": 30, "path": [25], "captured": []},
 ]
-LINES = ["21->17 [1 captura]", "30->25"]
+LINES = ["21->17 [1 capture]", "30->25"]
 
 
 class FakeClient(QwenClient):
@@ -28,49 +28,49 @@ class FakeClient(QwenClient):
     def chat(self, messages):
         self.calls += 1
         if not self.replies:
-            raise QwenError("agotado")
+            raise QwenError("exhausted")
         return self.replies.pop(0)
 
 
 class TestLLMPicker(unittest.TestCase):
-    def test_replica_valida(self):
-        p = LLMPicker(FakeClient(['{"from": 21, "to": 17, "comentario": "captura"}']))
-        move, raw, warn = p.choose("tablero", MOVES, LINES)
+    def test_valid_reply(self):
+        p = LLMPicker(FakeClient(['{"from": 21, "to": 17, "comment": "capture"}']))
+        move, raw, warn = p.choose("board", MOVES, LINES)
         self.assertEqual(move, MOVES[0])
         self.assertIsNone(warn)
 
-    def test_ilegal_repregunta_y_acierta(self):
+    def test_illegal_reasks_and_hits(self):
         c = FakeClient(['{"from": 99, "to": 98}', '{"from": 30, "to": 25}'])
         p = LLMPicker(c)
-        move, raw, warn = p.choose("tablero", MOVES, LINES)
+        move, raw, warn = p.choose("board", MOVES, LINES)
         self.assertEqual(move, MOVES[1])
         self.assertEqual(c.calls, 2)
         self.assertIsNone(warn)
 
-    def test_sigue_ilegal_toma_primera_legal_sin_crash(self):
-        c = FakeClient(['{"from": 99, "to": 98}', 'basura sin json'])
+    def test_still_illegal_takes_first_legal_without_crash(self):
+        c = FakeClient(['{"from": 99, "to": 98}', 'garbage without json'])
         p = LLMPicker(c)
-        move, raw, warn = p.choose("tablero", MOVES, LINES)
-        self.assertEqual(move, MOVES[0])          # primera legal
-        self.assertIn("ilegal dos veces", warn)
+        move, raw, warn = p.choose("board", MOVES, LINES)
+        self.assertEqual(move, MOVES[0])          # first legal move
+        self.assertIn("illegal move twice", warn)
 
-    def test_red_rota_fallback_sin_crash(self):
+    def test_broken_network_fallback_without_crash(self):
         class Dead(FakeClient):
             def chat(self, messages):
                 raise QwenError("HTTP 401 Authorization header is missing")
         p = LLMPicker(Dead(['x']))
-        move, raw, warn = p.choose("tablero", MOVES, LINES)
+        move, raw, warn = p.choose("board", MOVES, LINES)
         self.assertEqual(move, MOVES[0])
-        self.assertIn("sin respuesta", warn)
+        self.assertIn("no answer", warn)
 
-    def test_path_completo_tambien_aceptado(self):
+    def test_full_path_also_accepted(self):
         p = LLMPicker(FakeClient(['{"from": 21, "path": [17]}']))
-        move, _, _ = p.choose("tablero", MOVES, LINES)
+        move, _, _ = p.choose("board", MOVES, LINES)
         self.assertEqual(move, MOVES[0])
 
 
 class TestScrub(unittest.TestCase):
-    def test_key_masked_en_error(self):
+    def test_key_masked_in_error(self):
         c = QwenClient("http://x", "m", "SECRET-KEY-123")
         s = c.scrub("failed with SECRET-KEY-123 in body")
         self.assertNotIn("SECRET-KEY-123", s)
