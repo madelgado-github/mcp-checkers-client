@@ -1,0 +1,8 @@
+# secretos y artefactos locales: nunca se commitean
+config.ini
+qwen.key
+game.log
+PAIRING.html
+__pycache__/
+*.pyc
+.venv/
