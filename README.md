@@ -26,7 +26,7 @@ legacy path; if a key ever lived in that file, rotate it).
 - Node/npx on PATH (for the bridge above).
 - A current Chromium/Firefox browser for the game tab.
 - The Checkers page with the `checkers_*` tools: the production channel
-  (`https://tabandblank.com/games/checkers/`) works as-is — pairing is valid
+  (https://tabandblank.com/games/checkers/) works as-is — pairing is valid
   from ANY origin.
 
 ## Usage
@@ -148,7 +148,7 @@ hand from that page or from the terminal list (or with `--open prod`):
 
 | channel | EN | ES |
 |---|---|---|
-| production | `https://tabandblank.com/games/checkers/` | `https://tabandblank.com/es/juegos/checkers/` |
+| production | https://tabandblank.com/games/checkers/ | https://tabandblank.com/es/juegos/checkers/ |
 
 Pairing **works from any origin**: the client already looks for tools by
 SUFFIX `checkers_*` (nothing hardcodes a host; verified in
